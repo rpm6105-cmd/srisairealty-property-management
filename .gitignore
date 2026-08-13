@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Data (local storage - will move to Supabase)
+data/
+uploads/
+
+# Environment
+.env
+
+# OS files
+.DS_Store

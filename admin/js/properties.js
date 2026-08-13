@@ -1,0 +1,156 @@
+document.addEventListener('DOMContentLoaded', function () {
+    setTopbarTitle('Properties', 'Manage your property listings');
+    renderPage();
+});
+
+let allProperties = [];
+let currentFilter = 'all';
+let searchTerm = '';
+
+function renderPage() {
+    const content = document.getElementById('contentArea');
+    content.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px;">
+            <div class="search-bar">
+                <i class="fas fa-search"></i>
+                <input type="text" id="searchInput" placeholder="Search properties..." oninput="debouncedSearch(this.value)">
+            </div>
+            <a href="/admin/property-form.html" class="btn btn-primary"><i class="fas fa-plus"></i> Add Property</a>
+        </div>
+        <div class="filter-pills" style="margin-bottom: 20px;">
+            <button class="filter-pill active" data-filter="all" onclick="setFilter('all', this)">All</button>
+            <button class="filter-pill" data-filter="residential" onclick="setFilter('residential', this)">Residential</button>
+            <button class="filter-pill" data-filter="commercial" onclick="setFilter('commercial', this)">Commercial</button>
+            <button class="filter-pill" data-filter="plot" onclick="setFilter('plot', this)">Plots & Land</button>
+            <button class="filter-pill" data-filter="featured" onclick="setFilter('featured', this)">Featured</button>
+        </div>
+        <div class="card">
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Property</th>
+                            <th>Type</th>
+                            <th>Location</th>
+                            <th>Price</th>
+                            <th>Beds</th>
+                            <th>Featured</th>
+                            <th>Updated</th>
+                            <th style="text-align: right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="propertiesTableBody">
+                        <tr><td colspan="8" class="empty-cell"><div class="spinner" style="margin: 0 auto 12px;"></div>Loading properties...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+
+    loadProperties();
+}
+
+const debouncedSearch = debounce((term) => {
+    searchTerm = term.toLowerCase();
+    renderTable();
+});
+
+async function loadProperties() {
+    const tbody = document.getElementById('propertiesTableBody');
+    try {
+        allProperties = await API.get('/api/properties');
+        renderTable();
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-cell">Failed to load properties: ${esc(err.message)}</td></tr>`;
+    }
+}
+
+function setFilter(filter, btn) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-pill').forEach((b) => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    renderTable();
+}
+
+function getFilteredProperties() {
+    return allProperties.filter((p) => {
+        const matchesFilter =
+            currentFilter === 'all' ||
+            (currentFilter === 'featured' ? p.featured : p.type === currentFilter);
+        const matchesSearch =
+            !searchTerm ||
+            (p.title || '').toLowerCase().includes(searchTerm) ||
+            (p.location || '').toLowerCase().includes(searchTerm) ||
+            (p.price || '').toLowerCase().includes(searchTerm);
+        return matchesFilter && matchesSearch;
+    });
+}
+
+function renderTable() {
+    const tbody = document.getElementById('propertiesTableBody');
+    if (!tbody) return;
+    const filtered = getFilteredProperties();
+
+    if (!filtered.length) {
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-cell"><i class="fas fa-building" style="margin-right: 8px;"></i>No properties found.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtered.map((p) => `
+        <tr>
+            <td>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    ${p.images && p.images.length
+                        ? `<img src="${p.images[0]}" class="table-img" alt="">`
+                        : `<div class="table-img" style="background: var(--gray-100); display: flex; align-items: center; justify-content: center; color: var(--text-muted);"><i class="fas fa-building"></i></div>`}
+                    <div>
+                        <strong>${esc(p.title)}</strong>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">${esc(p.subType || p.type)}</div>
+                    </div>
+                </div>
+            </td>
+            <td><span class="status-badge ${p.type === 'commercial' ? 'status-contacted' : p.type === 'plot' ? 'status-new' : 'status-featured'}">${esc(capitalize(p.type))}</span></td>
+            <td><i class="fas fa-map-marker-alt" style="color: var(--primary); margin-right: 6px;"></i>${esc(p.location)}</td>
+            <td><strong style="color: var(--primary-dark);">${esc(p.price)}</strong></td>
+            <td>${p.beds ? p.beds : '—'}</td>
+            <td>
+                <label class="toggle">
+                    <input type="checkbox" ${p.featured ? 'checked' : ''} onchange="toggleFeatured('${p.id}', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </td>
+            <td style="white-space: nowrap; font-size: 0.8rem; color: var(--text-muted);">${formatDate(p.updatedAt)}</td>
+            <td style="text-align: right; white-space: nowrap;">
+                <a href="/admin/property-form.html?id=${p.id}" class="icon-btn edit" title="Edit"><i class="fas fa-edit"></i></a>
+                <a href="/admin/enquiries.html?property=${p.id}" class="icon-btn" title="View enquiries"><i class="fas fa-envelope"></i></a>
+                <button class="icon-btn delete" title="Delete" onclick="deleteProperty('${p.id}')"><i class="fas fa-trash"></i></button>
+            </td>
+        </tr>`).join('');
+}
+
+async function toggleFeatured(id, featured) {
+    try {
+        await API.put('/api/properties/' + id, JSON.stringify({ featured }));
+        toast(featured ? 'Property marked as featured' : 'Feature removed', 'success');
+    } catch (err) {
+        toast(err.message, 'error');
+        renderTable();
+    }
+}
+
+async function deleteProperty(id) {
+    const p = allProperties.find((x) => x.id === id);
+    if (!confirm(`Delete "${p ? p.title : 'this property'}"? This cannot be undone.`)) return;
+
+    try {
+        await API.del('/api/properties/' + id);
+        toast('Property deleted', 'success');
+        loadProperties();
+    } catch (err) {
+        toast(err.message, 'error');
+    }
+}
+
+function capitalize(str) {
+    if (!str) return '';
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
